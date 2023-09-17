@@ -6,6 +6,7 @@ use std::{
 };
 
 use clap::Parser;
+use uuid::Uuid;
 
 #[derive(Debug, Parser)]
 pub struct Cli {
@@ -28,6 +29,7 @@ pub struct Thing {
     pub path: PathBuf,
     pub port: u16,
     pub ty: ThingType,
+    pub uuid: Uuid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,6 +43,7 @@ pub enum InvalidThing {
     MissingColon(String),
     Port(String),
     Type(InvalidThingType),
+    Uuid(uuid::Error),
 }
 
 impl FromStr for Thing {
@@ -60,14 +63,21 @@ impl FromStr for Thing {
         let raw_path = get!();
         let raw_port = get!();
         let raw_type = get!();
+        let raw_uuid = get!();
 
         let path = PathBuf::from(raw_path);
         let port = raw_port
             .parse()
             .map_err(|_| InvalidThing::Port(s.to_owned()))?;
         let ty = raw_type.parse().map_err(InvalidThing::Type)?;
+        let uuid = Uuid::parse_str(raw_uuid).map_err(InvalidThing::Uuid)?;
 
-        Ok(Self { path, port, ty })
+        Ok(Self {
+            path,
+            port,
+            ty,
+            uuid,
+        })
     }
 }
 
@@ -80,6 +90,7 @@ impl Display for InvalidThing {
             ),
             InvalidThing::Port(s) => write!(f, r#"port is not valid in CLI thing "{s}""#),
             InvalidThing::Type(_) => f.write_str("invalid thing type given"),
+            InvalidThing::Uuid(_) => f.write_str("invalid uuid format"),
         }
     }
 }
@@ -88,6 +99,7 @@ impl StdError for InvalidThing {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             InvalidThing::Type(source) => Some(source),
+            InvalidThing::Uuid(err) => Some(err),
             InvalidThing::MissingColon(_) | InvalidThing::Port(_) => None,
         }
     }
