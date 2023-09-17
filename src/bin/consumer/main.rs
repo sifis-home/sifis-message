@@ -102,12 +102,16 @@ fn run_things(
     let mut children = Vec::new();
 
     for cli_thing in cli_things {
-        let &cli::Thing { ref path, port, ty } = cli_thing;
+        let &cli::Thing {
+            ref path,
+            port,
+            ty,
+            uuid,
+        } = cli_thing;
         let child = tokio::process::Command::new(path)
             .arg("--listen-port")
             .arg(format!("{port}"))
             .spawn()?;
-        let uuid = Uuid::new_v4();
         let thing = ThingRepr { port, uuid, ty };
 
         things_with_uuid.push(thing);
