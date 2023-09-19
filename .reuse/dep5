@@ -1,0 +1,8 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: sifis-message
+Upstream-Contact: Name Surname <mail@example.com>
+Source: https://your/project/link
+
+Files: *
+Copyright: 2019 Translation Company
+License: MIT

@@ -2,6 +2,8 @@
 name = "sifis-message"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "SIFIS-Home developer API runtime reference implementation"
 
 [dependencies]
 anyhow = "1.0.71"
