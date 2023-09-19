@@ -3190,7 +3190,7 @@ dependencies = [
 [[package]]
 name = "sifis-config"
 version = "0.1.0"
-source = "git+https://github.com/sifis-home/libp2p-rust-dht.git#fed0007da5c259488b4fca6a9f923b31a370af51"
+source = "git+https://github.com/sifis-home/libp2p-rust-dht.git#1b9f0c0d5ecf82521f3e66dd83b9b2ca45fb8de3"
 dependencies = [
  "clap",
  "figment",
@@ -3200,7 +3200,7 @@ dependencies = [
 [[package]]
 name = "sifis-dht"
 version = "0.1.0"
-source = "git+https://github.com/sifis-home/libp2p-rust-dht.git#fed0007da5c259488b4fca6a9f923b31a370af51"
+source = "git+https://github.com/sifis-home/libp2p-rust-dht.git#1b9f0c0d5ecf82521f3e66dd83b9b2ca45fb8de3"
 dependencies = [
  "async-trait",
  "futures",
