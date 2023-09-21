@@ -222,8 +222,7 @@ pub enum ResponseMessageType {
     ResponseMessage,
 }
 
-pub const LAMP_TOPIC_NAME: &str = "sifis_lamp";
-pub const SINK_TOPIC_NAME: &str = "sifis_sink";
+pub const LAMP_TOPIC_NAME: &str = "domo_light";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GetTopicNameEntry<T> {

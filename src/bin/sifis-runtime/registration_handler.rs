@@ -1,16 +1,18 @@
 use std::{borrow::Cow, sync::Arc};
 
-use anyhow::Context;
-use log::{debug, info, trace, warn};
+use anyhow::{anyhow, Context};
+use log::{info, trace, warn};
+use serde::Deserialize;
 use sifis_dht::domocache::DomoCache;
-use sifis_message::RequestMessage;
+use sifis_message::{RequestMessage, LAMP_TOPIC_NAME};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::{
     continuation::{self, Continuation},
+    domo_wot_bridge,
     registration::{self, Registration, ThingTypeRegistration},
-    ucs, AccessRequest, AccessRequestKind, PeerId, QueuedResponseMessage, Responder,
+    ucs, AccessRequest, AccessRequestKind, PeerId, QueuedResponseMessage,
 };
 
 pub(super) async fn handle_registration_message(
@@ -124,8 +126,11 @@ impl Helper<'_> {
 
         match operation {
             registration::ThingOperation::RequestPermission(peer_id) => {
-                let access_request =
-                    create_access_request(thing_type.thing_uuid, &thing_type.registration, peer_id);
+                let access_request = create_access_request(
+                    &thing_type.thing_uuid,
+                    &thing_type.registration,
+                    peer_id,
+                );
                 let (responder_sender, responder_receiver) = oneshot::channel();
 
                 response_sender
@@ -161,25 +166,42 @@ impl Helper<'_> {
             }
 
             registration::ThingOperation::Interact => {
-                let request_message = RequestMessage::new(thing_type.thing_uuid, ".well-known/wot");
-                let (done_sender, done_receiver) = oneshot::channel();
-                let response_message = QueuedResponseMessage::Register {
-                    uuid: request_message.request_id,
-                    responder: Responder::Thing {
-                        sender: continuation_sender.clone(),
-                        registration: thing_type,
+                match thing_type.registration {
+                    ThingTypeRegistration::Lamp(lamp) => match lamp {
+                        registration::Lamp::OnOff(responder) => {
+                            let result = domo_cache
+                                .get_topic_uuid(LAMP_TOPIC_NAME, &thing_type.thing_uuid)
+                                .map_err(|_| registration::ResponseError)
+                                .and_then(|raw_topic| {
+                                    let topic = domo_wot_bridge::Topic::<domo_wot_bridge::Lamp>::deserialize(&raw_topic)
+                                            .map_err(|_| registration::ResponseError)?;
+                                    Ok(topic.value.status)
+                                });
+
+                            responder
+                                .send(result)
+                                .map_err(|_| anyhow!("response sender channel is closed"))?;
+                        }
+                        registration::Lamp::SetOn { value, responder } => {
+                            use domo_wot_bridge::*;
+
+                            let message =
+                                VolatileMessage::new(Command::TurnCommand(CommandInner {
+                                    topic_name: LAMP_TOPIC_NAME,
+                                    topic_uuid: &thing_type.thing_uuid,
+                                    inner: TurnCommand {
+                                        desired_state: value,
+                                    },
+                                }));
+
+                            domo_cache
+                                .pub_value(serde_json::to_value(message).context(
+                                    "unable to convert turn command for lamp into JSON",
+                                )?);
+                            todo!()
+                        }
                     },
-                    done: done_sender,
                 };
-
-                response_sender
-                    .send(response_message)
-                    .await
-                    .context("response sender channel is closed")?;
-                debug!("Waiting done event");
-                done_receiver.await.context("done channel is closed")?;
-
-                pub_request_message(&request_message, domo_cache).await?;
             }
         }
 
@@ -264,11 +286,11 @@ async fn pub_request_message(
 }
 
 fn create_access_request(
-    thing_uuid: Uuid,
+    thing_uuid: &str,
     registration: &ThingTypeRegistration,
     peer_id: PeerId,
 ) -> ucs::TryAccessRequest {
-    use registration::{Lamp, Sink};
+    use registration::Lamp;
     use ucs::try_access_request::RequestKind;
     use ThingTypeRegistration as TTR;
 
@@ -282,26 +304,6 @@ fn create_access_request(
             value: false,
             responder: _,
         }) => RequestKind::TurnOff,
-        TTR::Lamp(Lamp::Brightness(_)) => RequestKind::GetBrightness,
-        TTR::Lamp(Lamp::SetBrightness {
-            value,
-            responder: _,
-        }) => RequestKind::SetBrightness(value),
-        TTR::Sink(Sink::Flow(_)) => todo!(),
-        TTR::Sink(Sink::Temp(_)) => todo!(),
-        TTR::Sink(Sink::Level(_)) => todo!(),
-        TTR::Sink(Sink::SetFlow {
-            value: _,
-            responder: _,
-        }) => todo!(),
-        TTR::Sink(Sink::SetTemp {
-            value: _,
-            responder: _,
-        }) => todo!(),
-        TTR::Sink(Sink::SetDrain {
-            open: _,
-            responder: _,
-        }) => todo!(),
     };
 
     let message_id = Uuid::new_v4();
