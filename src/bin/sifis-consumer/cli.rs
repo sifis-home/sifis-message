@@ -37,7 +37,6 @@ pub struct Thing {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThingType {
     Lamp,
-    Sink,
 }
 
 #[derive(Debug)]
@@ -120,7 +119,6 @@ impl FromStr for ThingType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "lamp" => Ok(Self::Lamp),
-            "sink" => Ok(Self::Sink),
             _ => Err(InvalidThingType(s.to_owned())),
         }
     }

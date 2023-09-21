@@ -12,7 +12,7 @@ use reqwest::{Client, Url};
 use sifis_dht::domocache::{DomoCache, DomoEvent};
 use sifis_message::{
     domo_cache_from_config, manage_domo_cache, Authorization, InternalResponseMessage,
-    RequestMessage, ResponseMessageType, LAMP_TOPIC_NAME, SINK_TOPIC_NAME,
+    RequestMessage, ResponseMessageType, LAMP_TOPIC_NAME,
 };
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -290,7 +290,6 @@ async fn register_things(things_with_uuid: &[ThingRepr], message_sender: mpsc::S
     for &ThingRepr { uuid, ty, .. } in things_with_uuid {
         let topic = match ty {
             ThingType::Lamp => LAMP_TOPIC_NAME,
-            ThingType::Sink => SINK_TOPIC_NAME,
         };
 
         message_sender

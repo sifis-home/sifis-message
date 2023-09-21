@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 mod continuation;
+mod domo_wot_bridge;
 mod registration;
 mod registration_handler;
 mod ucs;
@@ -33,10 +34,10 @@ use sifis_api::{
     service::{Error as SifisApiError, SifisApi},
     DoorLockStatus, Hazard,
 };
-use sifis_dht::domocache::DomoEvent;
+use sifis_dht::domocache::{DomoCacheElement, DomoEvent};
 use sifis_message::{
     domo_cache_from_config, dump_sample_domo_cache, manage_domo_cache, GetTopicNameEntry,
-    InternalResponseMessage, LAMP_TOPIC_NAME, SINK_TOPIC_NAME,
+    InternalResponseMessage, LAMP_TOPIC_NAME,
 };
 use tarpc::{
     server::{BaseChannel, Channel},
@@ -104,7 +105,6 @@ impl SifisApi for SifisToDht {
         id: String,
     ) -> Result<bool, SifisApiError> {
         trace!("Request to turn lamp on for id {id}");
-        let id = from_str_uuid(&id)?;
         self.register(Registration::lamp_set_on(id, true, self.peer_id))
             .await?;
         Ok(true)
@@ -116,7 +116,6 @@ impl SifisApi for SifisToDht {
         id: String,
     ) -> Result<bool, SifisApiError> {
         trace!("Request to turn lamp off for id {id}");
-        let id = from_str_uuid(&id)?;
         self.register(Registration::lamp_set_on(id, false, self.peer_id))
             .await?;
         Ok(false)
@@ -128,7 +127,6 @@ impl SifisApi for SifisToDht {
         id: String,
     ) -> Result<bool, SifisApiError> {
         trace!("Request the lamp on/off status for {id}");
-        let id = from_str_uuid(&id)?;
         self.register(Registration::lamp_on_off(id, self.peer_id))
             .await
     }
@@ -139,15 +137,7 @@ impl SifisApi for SifisToDht {
         id: String,
         brightness: u8,
     ) -> Result<u8, SifisApiError> {
-        trace!("Request to set the lamp brightness for id {id}");
-        let id = from_str_uuid(&id)?;
-        self.register(Registration::lamp_set_brightness(
-            id,
-            brightness,
-            self.peer_id,
-        ))
-        .await?;
-        Ok(brightness)
+        todo!()
     }
 
     async fn get_lamp_brightness(
@@ -155,99 +145,70 @@ impl SifisApi for SifisToDht {
         _: tarpc::context::Context,
         id: String,
     ) -> Result<u8, SifisApiError> {
-        trace!("Request the lamp brightness for id {id}");
-        let id = from_str_uuid(&id)?;
-        self.register(Registration::lamp_brightness(id, self.peer_id))
-            .await
+        Ok(100)
     }
 
     #[inline]
     async fn find_sinks(self, _: tarpc::context::Context) -> Result<Vec<String>, SifisApiError> {
-        trace!("Request to find sinks");
-        find_by_topic(&self.cache_sender, SINK_TOPIC_NAME).await
+        todo!()
     }
 
     async fn set_sink_flow(
         self,
         _: tarpc::context::Context,
-        id: String,
-        flow: u8,
+        _id: String,
+        _flow: u8,
     ) -> Result<u8, SifisApiError> {
-        trace!("Request to set sink flow for id {id}");
-        let id = from_str_uuid(&id)?;
-        self.register(Registration::sink_set_flow(id, flow, self.peer_id))
-            .await?;
-        Ok(flow)
+        todo!()
     }
 
     async fn get_sink_flow(
         self,
         _: tarpc::context::Context,
-        id: String,
+        _id: String,
     ) -> Result<u8, SifisApiError> {
-        trace!("Request the sink flow for id {id}");
-        let id = from_str_uuid(&id)?;
-        self.register(Registration::sink_flow(id, self.peer_id))
-            .await
+        todo!()
     }
 
     async fn set_sink_temp(
         self,
         _: tarpc::context::Context,
         id: String,
-        temp: u8,
+        _temp: u8,
     ) -> Result<u8, SifisApiError> {
-        trace!("Request to set sink temperature for id {id}");
-        let id = from_str_uuid(&id)?;
-        self.register(Registration::sink_set_temp(id, temp, self.peer_id))
-            .await?;
-        Ok(temp)
+        todo!()
     }
 
     async fn get_sink_temp(
         self,
         _: tarpc::context::Context,
-        id: String,
+        _id: String,
     ) -> Result<u8, SifisApiError> {
-        trace!("Request the sink temperature for id {id}");
-        let id = from_str_uuid(&id)?;
-        self.register(Registration::sink_temp(id, self.peer_id))
-            .await
+        todo!()
     }
 
     async fn close_sink_drain(
         self,
         _: tarpc::context::Context,
-        id: String,
+        _id: String,
     ) -> Result<bool, SifisApiError> {
-        trace!("Request to close the sink drain for id {id}");
-        let id = from_str_uuid(&id)?;
-        self.register(Registration::sink_set_drain(id, false, self.peer_id))
-            .await?;
-        Ok(false)
+        todo!()
     }
 
     async fn open_sink_drain(
         self,
         _: tarpc::context::Context,
-        id: String,
+        _id: String,
     ) -> Result<bool, SifisApiError> {
-        trace!("Request to open the sink drain for id {id}");
-        let id = from_str_uuid(&id)?;
-        self.register(Registration::sink_set_drain(id, true, self.peer_id))
-            .await?;
-        Ok(true)
+        todo!()
     }
 
     async fn get_sink_level(
         self,
         _: tarpc::context::Context,
-        id: String,
+        _id: String,
     ) -> Result<u8, SifisApiError> {
-        trace!("Request the sink level for id {id}");
-        let id = from_str_uuid(&id)?;
-        self.register(Registration::sink_level(id, self.peer_id))
-            .await
+        todo!()
     }
 
     async fn find_doors(self, _: tarpc::context::Context) -> Result<Vec<String>, SifisApiError> {
@@ -459,10 +420,24 @@ async fn handle_domo_event(
     topic_uuid_str: &str,
     response_sender: &mpsc::Sender<QueuedResponseMessage>,
 ) -> anyhow::Result<()> {
-    let DomoEvent::VolatileData(volatile_data) = event else {
-        return Ok(());
-    };
+    match event {
+        DomoEvent::None => Ok(()),
+        DomoEvent::VolatileData(value) => {
+            handle_domo_event_volatile_data(value, topic_name, topic_uuid_str, response_sender)
+                .await
+        }
+        DomoEvent::PersistentData(cache_element) => {
+            handle_domo_event_persistent_data(cache_element, response_sender).await
+        }
+    }
+}
 
+async fn handle_domo_event_volatile_data(
+    volatile_data: serde_json::Value,
+    topic_name: &str,
+    topic_uuid_str: &str,
+    response_sender: &mpsc::Sender<QueuedResponseMessage>,
+) -> anyhow::Result<()> {
     let Ok(response_message) = serde_json::from_value(volatile_data) else {
         return Ok(());
     };
@@ -492,6 +467,18 @@ async fn handle_domo_event(
         .send(QueuedResponseMessage::Respond(response_message))
         .await
         .context("response channel should not be closed")?;
+    Ok(())
+}
+
+async fn handle_domo_event_persistent_data(
+    persistent_data: DomoCacheElement,
+    response_sender: &mpsc::Sender<QueuedResponseMessage>,
+) -> anyhow::Result<()> {
+    response_sender
+        .send(QueuedResponseMessage::PersistentMessage(persistent_data))
+        .await
+        .map_err(|_| anyhow!("unable to send persistent message, channel closed"))?;
+
     Ok(())
 }
 
@@ -575,6 +562,8 @@ async fn handle_responses(
     let mut queue = HashMap::<Uuid, ResponseQueueEntry>::new();
     let mut last_cleanup = Instant::now();
     let mut responses_states = ResponseStates::default();
+
+    todo!("create a vec of internal responder, a new variant on queued response message to wait a new persistent message, and a new variant to receive persistent messages and remove responders from queue");
 
     loop {
         while queue.is_empty().not() {
@@ -904,6 +893,7 @@ enum QueuedResponseMessage {
         request: AccessRequest,
         responder: oneshot::Sender<()>,
     },
+    PersistentMessage(DomoCacheElement),
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

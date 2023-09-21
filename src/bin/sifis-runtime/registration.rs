@@ -38,7 +38,7 @@ pub(super) enum Registration {
 
 #[derive(Debug)]
 pub struct ThingType {
-    pub thing_uuid: Uuid,
+    pub thing_uuid: String,
     pub registration: ThingTypeRegistration,
 }
 
@@ -47,38 +47,13 @@ pub struct ThingType {
 #[derive(Debug)]
 pub enum ThingTypeRegistration {
     Lamp(Lamp),
-    Sink(Sink),
 }
 
 #[derive(Debug)]
 pub enum Lamp {
     OnOff(ResponseSender<bool>),
-    Brightness(ResponseSender<u8>),
     SetOn {
         value: bool,
-        responder: ResponseSender<()>,
-    },
-    SetBrightness {
-        value: u8,
-        responder: ResponseSender<()>,
-    },
-}
-
-#[derive(Debug)]
-pub enum Sink {
-    Flow(ResponseSender<u8>),
-    Temp(ResponseSender<u8>),
-    Level(ResponseSender<u8>),
-    SetFlow {
-        value: u8,
-        responder: ResponseSender<()>,
-    },
-    SetTemp {
-        value: u8,
-        responder: ResponseSender<()>,
-    },
-    SetDrain {
-        open: bool,
         responder: ResponseSender<()>,
     },
 }
@@ -104,7 +79,10 @@ impl Registration {
         Self::build(|_request_uuid, responder| Self::GetTopicName { name, responder })
     }
 
-    pub(super) fn lamp_on_off(thing_uuid: Uuid, peer_id: PeerId) -> (Self, ResponseReceiver<bool>) {
+    pub(super) fn lamp_on_off(
+        thing_uuid: String,
+        peer_id: PeerId,
+    ) -> (Self, ResponseReceiver<bool>) {
         Self::build(|request_uuid, responder| Self::Thing {
             request_uuid,
             ty: ThingType {
@@ -115,22 +93,8 @@ impl Registration {
         })
     }
 
-    pub(super) fn lamp_brightness(
-        thing_uuid: Uuid,
-        peer_id: PeerId,
-    ) -> (Self, ResponseReceiver<u8>) {
-        Self::build(|request_uuid, responder| Self::Thing {
-            request_uuid,
-            ty: ThingType {
-                registration: ThingTypeRegistration::Lamp(Lamp::Brightness(responder)),
-                thing_uuid,
-            },
-            operation: ThingOperation::RequestPermission(peer_id),
-        })
-    }
-
     pub(super) fn lamp_set_on(
-        thing_uuid: Uuid,
+        thing_uuid: String,
         value: bool,
         peer_id: PeerId,
     ) -> (Self, ResponseReceiver<()>) {
@@ -139,99 +103,6 @@ impl Registration {
             ty: ThingType {
                 registration: ThingTypeRegistration::Lamp(Lamp::SetOn { value, responder }),
                 thing_uuid,
-            },
-            operation: ThingOperation::RequestPermission(peer_id),
-        })
-    }
-
-    pub(super) fn lamp_set_brightness(
-        thing_uuid: Uuid,
-        value: u8,
-        peer_id: PeerId,
-    ) -> (Self, ResponseReceiver<()>) {
-        Self::build(|request_uuid, responder| Self::Thing {
-            request_uuid,
-            ty: ThingType {
-                registration: ThingTypeRegistration::Lamp(Lamp::SetBrightness { value, responder }),
-                thing_uuid,
-            },
-            operation: ThingOperation::RequestPermission(peer_id),
-        })
-    }
-
-    pub(super) fn sink_flow(thing_uuid: Uuid, peer_id: PeerId) -> (Self, ResponseReceiver<u8>) {
-        Self::build(|request_uuid, responder| Self::Thing {
-            request_uuid,
-            ty: ThingType {
-                registration: ThingTypeRegistration::Sink(Sink::Flow(responder)),
-                thing_uuid,
-            },
-            operation: ThingOperation::RequestPermission(peer_id),
-        })
-    }
-
-    pub(super) fn sink_temp(thing_uuid: Uuid, peer_id: PeerId) -> (Self, ResponseReceiver<u8>) {
-        Self::build(|request_uuid, responder| Self::Thing {
-            request_uuid,
-            ty: ThingType {
-                registration: ThingTypeRegistration::Sink(Sink::Temp(responder)),
-                thing_uuid,
-            },
-            operation: ThingOperation::RequestPermission(peer_id),
-        })
-    }
-
-    pub(super) fn sink_level(topic_uuid: Uuid, peer_id: PeerId) -> (Self, ResponseReceiver<u8>) {
-        Self::build(|request_uuid, responder| Self::Thing {
-            request_uuid,
-            ty: ThingType {
-                registration: ThingTypeRegistration::Sink(Sink::Level(responder)),
-                thing_uuid: topic_uuid,
-            },
-            operation: ThingOperation::RequestPermission(peer_id),
-        })
-    }
-
-    pub(super) fn sink_set_flow(
-        thing_uuid: Uuid,
-        value: u8,
-        peer_id: PeerId,
-    ) -> (Self, ResponseReceiver<()>) {
-        Self::build(|request_uuid, responder| Self::Thing {
-            request_uuid,
-            ty: ThingType {
-                registration: ThingTypeRegistration::Sink(Sink::SetFlow { value, responder }),
-                thing_uuid,
-            },
-            operation: ThingOperation::RequestPermission(peer_id),
-        })
-    }
-
-    pub(super) fn sink_set_temp(
-        thing_uuid: Uuid,
-        value: u8,
-        peer_id: PeerId,
-    ) -> (Self, ResponseReceiver<()>) {
-        Self::build(|request_uuid, responder| Self::Thing {
-            request_uuid,
-            ty: ThingType {
-                registration: ThingTypeRegistration::Sink(Sink::SetTemp { value, responder }),
-                thing_uuid,
-            },
-            operation: ThingOperation::RequestPermission(peer_id),
-        })
-    }
-
-    pub(super) fn sink_set_drain(
-        topic_uuid: Uuid,
-        open: bool,
-        peer_id: PeerId,
-    ) -> (Self, ResponseReceiver<()>) {
-        Self::build(|request_uuid, responder| Self::Thing {
-            request_uuid,
-            ty: ThingType {
-                registration: ThingTypeRegistration::Sink(Sink::SetDrain { open, responder }),
-                thing_uuid: topic_uuid,
             },
             operation: ThingOperation::RequestPermission(peer_id),
         })
