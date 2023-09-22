@@ -52,6 +52,7 @@ use tokio::{
 use uuid::Uuid;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_PERSISTENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 struct SifisToDht {
@@ -134,8 +135,8 @@ impl SifisApi for SifisToDht {
     async fn set_lamp_brightness(
         self,
         _: tarpc::context::Context,
-        id: String,
-        brightness: u8,
+        _id: String,
+        _brightness: u8,
     ) -> Result<u8, SifisApiError> {
         todo!()
     }
@@ -143,7 +144,7 @@ impl SifisApi for SifisToDht {
     async fn get_lamp_brightness(
         self,
         _: tarpc::context::Context,
-        id: String,
+        _id: String,
     ) -> Result<u8, SifisApiError> {
         Ok(100)
     }
@@ -173,7 +174,7 @@ impl SifisApi for SifisToDht {
     async fn set_sink_temp(
         self,
         _: tarpc::context::Context,
-        id: String,
+        _id: String,
         _temp: u8,
     ) -> Result<u8, SifisApiError> {
         todo!()
@@ -285,11 +286,6 @@ impl SifisApi for SifisToDht {
     }
 }
 
-fn from_str_uuid(id: &str) -> Result<Uuid, SifisApiError> {
-    id.parse()
-        .map_err(|_| SifisApiError::NotFound("invalid id".to_owned()))
-}
-
 #[derive(Parser, Debug)]
 struct Cli {
     /// Path to config for libp2p-rust-dht cache in TOML format
@@ -380,7 +376,6 @@ async fn main() -> anyhow::Result<()> {
     (
         Box::pin(manage_domo_cache(domo_cache, cache_receiver, {
             let response_sender = response_sender.clone();
-            let continuation_sender = continuation_sender.clone();
             let ucs_topic_name = Arc::clone(&ucs_topic_name);
             move |message, domo_cache| {
                 handle_registration_message(
@@ -390,7 +385,6 @@ async fn main() -> anyhow::Result<()> {
                     Arc::clone(&ucs_topic_name),
                     Arc::clone(&ucs_topic_uuid),
                     response_sender.clone(),
-                    continuation_sender.clone(),
                 )
                 .boxed()
             }
@@ -405,7 +399,7 @@ async fn main() -> anyhow::Result<()> {
             continuation_sender.clone(),
         ),
         tarpc_server.map(Ok),
-        continuation::handle_receiver(continuation_receiver, &response_sender, &cache_sender),
+        continuation::handle_receiver(continuation_receiver, &cache_sender),
         registration_handler(&cache_sender, &registered_to_ucs, &topic_name, topic_uuid).map(Ok),
     )
         .race()
@@ -474,8 +468,16 @@ async fn handle_domo_event_persistent_data(
     persistent_data: DomoCacheElement,
     response_sender: &mpsc::Sender<QueuedResponseMessage>,
 ) -> anyhow::Result<()> {
+    let DomoCacheElement {
+        topic_name,
+        topic_uuid,
+        ..
+    } = persistent_data;
     response_sender
-        .send(QueuedResponseMessage::PersistentMessage(persistent_data))
+        .send(QueuedResponseMessage::PersistentMessage {
+            topic_name,
+            topic_uuid,
+        })
         .await
         .map_err(|_| anyhow!("unable to send persistent message, channel closed"))?;
 
@@ -551,6 +553,14 @@ async fn find_by_topic(
         })
 }
 
+#[derive(Debug)]
+struct PersistentTrigger {
+    topic_name: &'static str,
+    topic_uuid: String,
+    responder: ResponseSender<()>,
+    expiration: Instant,
+}
+
 async fn handle_responses(
     mut response_receiver: mpsc::Receiver<QueuedResponseMessage>,
     registered_to_ucs: &AtomicBool,
@@ -562,8 +572,7 @@ async fn handle_responses(
     let mut queue = HashMap::<Uuid, ResponseQueueEntry>::new();
     let mut last_cleanup = Instant::now();
     let mut responses_states = ResponseStates::default();
-
-    todo!("create a vec of internal responder, a new variant on queued response message to wait a new persistent message, and a new variant to receive persistent messages and remove responders from queue");
+    let mut persistent_triggers = Vec::new();
 
     loop {
         while queue.is_empty().not() {
@@ -575,6 +584,7 @@ async fn handle_responses(
                     &mut responses_states,
                     registered_to_ucs,
                     &continuation_sender,
+                    &mut persistent_triggers,
                 ),
                 Err(_) => {
                     let now = Instant::now();
@@ -591,6 +601,7 @@ async fn handle_responses(
                     }
 
                     queue.retain(|_, entry| entry.expiration > now);
+                    persistent_triggers.retain(|trigger| trigger.expiration > now);
                     last_cleanup = now;
                 }
                 Ok(None) => bail!("responses channel is unexpectedly closed"),
@@ -611,13 +622,14 @@ async fn handle_responses(
             &mut responses_states,
             registered_to_ucs,
             &continuation_sender,
+            &mut persistent_triggers,
         );
     }
 }
 
 #[derive(Debug)]
 struct ResponseQueueEntry {
-    responder: Responder,
+    responder: ResponseSender<()>,
     expiration: Instant,
 }
 
@@ -628,26 +640,9 @@ fn handle_response(
     responses_states: &mut ResponseStates,
     registered_to_ucs: &AtomicBool,
     continuation_sender: &mpsc::UnboundedSender<Continuation>,
+    persistent_triggers: &mut Vec<PersistentTrigger>,
 ) {
     match message {
-        QueuedResponseMessage::Register {
-            uuid,
-            responder,
-            done,
-        } => {
-            trace!("Handling register message message: uuid={uuid}, responder={responder:#?}");
-            let entry = ResponseQueueEntry {
-                responder,
-                expiration: Instant::now() + DEFAULT_TIMEOUT,
-            };
-            if queue.insert(uuid, entry).is_some() {
-                warn!("collision detected in responders queue");
-            }
-
-            if done.send(()).is_err() {
-                warn!("done channel is closed");
-            }
-        }
         QueuedResponseMessage::Respond(ResponseMessage::Ucs(response)) => {
             handle_response_ucs_response(
                 &response,
@@ -688,28 +683,37 @@ fn handle_response(
             if let Some(entry) = queue.remove(&request_id) {
                 debug!("Dequeued entry from queue: {entry:#?}");
 
-                match entry.responder {
-                    Responder::Bool(sender) => {
-                        deserialize_and_respond(request_id, body, sender, Ok);
-                    }
-                    Responder::U8(sender) => {
-                        deserialize_and_respond(request_id, body, sender, Ok);
-                    }
-                    Responder::Unit(sender) => {
-                        deserialize_and_respond(request_id, body, sender, Ok);
-                    }
-                    Responder::Thing {
-                        sender,
-                        registration,
-                    } => deserialize_and_respond(request_id, body, sender, |thing| {
-                        Continuation::Thing {
-                            thing,
-                            ty: registration,
-                        }
-                    }),
-                }
+                deserialize_and_respond(request_id, body, entry.responder, Ok);
             } else {
                 warn!("request {request_id} not found in registered responders");
+            }
+        }
+        QueuedResponseMessage::RegisterPersistentMessage {
+            topic_name,
+            topic_uuid,
+            responder,
+        } => {
+            let expiration = Instant::now() + DEFAULT_PERSISTENT_TIMEOUT;
+            persistent_triggers.push(PersistentTrigger {
+                topic_name,
+                topic_uuid,
+                responder,
+                expiration,
+            });
+        }
+
+        QueuedResponseMessage::PersistentMessage {
+            topic_name,
+            topic_uuid,
+        } => {
+            let trigger_index = persistent_triggers.iter().position(|trigger| {
+                trigger.topic_name == topic_name && trigger.topic_uuid == topic_uuid
+            });
+            if let Some(trigger_index) = trigger_index {
+                let trigger = persistent_triggers.swap_remove(trigger_index);
+                if trigger.responder.send(Ok(())).is_err() {
+                    warn!("unable to respond with unit message, channel is closed");
+                };
             }
         }
     }
@@ -717,6 +721,7 @@ fn handle_response(
     let now = Instant::now();
     if *last_cleanup + DEFAULT_TIMEOUT <= now {
         queue.retain(|_, entry| entry.expiration > now);
+        persistent_triggers.retain(|trigger| trigger.expiration > now);
         *last_cleanup = now;
     }
 }
@@ -880,11 +885,6 @@ fn deserialize_and_respond<T, U, F>(
 
 #[derive(Debug)]
 enum QueuedResponseMessage {
-    Register {
-        uuid: Uuid,
-        responder: Responder,
-        done: oneshot::Sender<()>,
-    },
     Respond(ResponseMessage),
     UcsRegistration {
         message_id: Uuid,
@@ -893,7 +893,15 @@ enum QueuedResponseMessage {
         request: AccessRequest,
         responder: oneshot::Sender<()>,
     },
-    PersistentMessage(DomoCacheElement),
+    RegisterPersistentMessage {
+        topic_name: &'static str,
+        topic_uuid: String,
+        responder: ResponseSender<()>,
+    },
+    PersistentMessage {
+        topic_name: String,
+        topic_uuid: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -901,36 +909,6 @@ enum QueuedResponseMessage {
 pub enum ResponseMessage {
     Internal(InternalResponseMessage),
     Ucs(ucs::Response<'static>),
-}
-
-#[derive(Debug)]
-enum Responder {
-    Bool(ResponseSender<bool>),
-    U8(ResponseSender<u8>),
-    Unit(ResponseSender<()>),
-    Thing {
-        sender: mpsc::UnboundedSender<Continuation>,
-        registration: registration::ThingType,
-    },
-}
-
-impl Responder {
-    pub fn respond_with_error(self) -> Result<(), ChannelClosedError> {
-        match self {
-            Responder::Bool(sender) => sender
-                .send(Err(ResponseError))
-                .map_err(|_| ChannelClosedError),
-            Responder::U8(sender) => sender
-                .send(Err(ResponseError))
-                .map_err(|_| ChannelClosedError),
-            Responder::Unit(sender) => sender
-                .send(Err(ResponseError))
-                .map_err(|_| ChannelClosedError),
-            Responder::Thing { .. } => {
-                panic!("cannot use respond_with_error on a Responder::Thing variant")
-            }
-        }
-    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -1020,7 +998,7 @@ fn handle_ucs_response_inner<F>(
                 return;
             };
 
-            if request.responder.respond_with_error().is_err() {
+            if request.responder.send(Err(ResponseError)).is_err() {
                 warn!("Unable to respond with deny: channel closed");
             }
         }

@@ -215,23 +215,6 @@ pub const fn get_status<'a>(subject_id: &'a str, resource_id: &'a str) -> Reques
 }
 
 #[inline]
-pub const fn get_brightness<'a>(
-    subject_id: &'a str,
-    resource_id: &'a str,
-) -> Request<'a, GetBrightness> {
-    Request::new(subject_id, resource_id, GetBrightness)
-}
-
-#[inline]
-pub const fn set_brightness<'a>(
-    subject_id: &'a str,
-    resource_id: &'a str,
-    value: u8,
-) -> Request<'a, SetBrightness> {
-    Request::new(subject_id, resource_id, SetBrightness(value))
-}
-
-#[inline]
 pub const fn turn_on<'a>(subject_id: &'a str, resource_id: &'a str) -> Request<'a, TurnOn> {
     Request::new(subject_id, resource_id, TurnOn)
 }
@@ -243,8 +226,6 @@ pub const fn turn_off<'a>(subject_id: &'a str, resource_id: &'a str) -> Request<
 
 #[cfg(test)]
 mod tests {
-    use crate::ucs::request::set_brightness;
-
     use super::get_status;
 
     #[test]
@@ -272,41 +253,6 @@ mod tests {
                 <Attributes Category=\"urn:oasis:names:tc:xacml:3.0:attribute-category:action\">\
                     <Attribute AttributeId=\"urn:oasis:names:tc:xacml:1.0:action:action-id\" IncludeInResult=\"false\">\
                         <AttributeValue DataType=\"http://www.w3.org/2001/XMLSchema#string\">get_status</AttributeValue>\
-                    </Attribute>\
-                </Attributes>\
-            </Request>\
-            ",
-        );
-    }
-
-    #[test]
-    fn write_action_with_data() {
-        let mut out = Vec::new();
-        set_brightness("subject", "resource", 42)
-            .write_xml(&mut out)
-            .unwrap();
-
-        assert_eq!(
-            out, b"\
-            <?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-            <Request ReturnPolicyIdList=\"false\" CombinedDecision=\"false\" \
-                     xmlns=\"urn:oasis:names:tc:xacml:3.0:core:schema:wd-17\">\
-                <Attributes Category=\"urn:oasis:names:tc:xacml:1.0:subject-category:access-subject\">\
-                    <Attribute AttributeId=\"urn:oasis:names:tc:xacml:1.0:subject:subject-id\" IncludeInResult=\"false\">\
-                        <AttributeValue DataType=\"http://www.w3.org/2001/XMLSchema#string\">subject</AttributeValue>\
-                    </Attribute>\
-                </Attributes>\
-                <Attributes Category=\"urn:oasis:names:tc:xacml:3.0:attribute-category:resource\">\
-                    <Attribute AttributeId=\"urn:oasis:names:tc:xacml:1.0:resource:resource-id\" IncludeInResult=\"false\">\
-                        <AttributeValue DataType=\"http://www.w3.org/2001/XMLSchema#string\">resource</AttributeValue>\
-                    </Attribute>\
-                </Attributes>\
-                <Attributes Category=\"urn:oasis:names:tc:xacml:3.0:attribute-category:action\">\
-                    <Attribute AttributeId=\"urn:oasis:names:tc:xacml:1.0:action:action-id\" IncludeInResult=\"false\">\
-                        <AttributeValue DataType=\"http://www.w3.org/2001/XMLSchema#string\">set_brightness</AttributeValue>\
-                    </Attribute>\
-                    <Attribute AttributeId=\"eu:sifis-home:1.0:action:brightness-value\" IncludeInResult=\"false\">\
-                        <AttributeValue DataType=\"http://www.w3.org/2001/XMLSchema#integer\">42</AttributeValue>\
                     </Attribute>\
                 </Attributes>\
             </Request>\
