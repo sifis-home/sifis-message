@@ -8,7 +8,6 @@ use std::{
 
 use log::info;
 use pin_project_lite::pin_project;
-use sifis_message::RequestMessage;
 use tokio::{
     sync::oneshot,
     time::{self, Timeout},
@@ -24,7 +23,6 @@ pub(super) enum Registration {
         ty: ThingType,
         operation: ThingOperation,
     },
-    Raw(RequestMessage),
     GetTopicName {
         name: String,
         responder: oneshot::Sender<Result<serde_json::Value, String>>,

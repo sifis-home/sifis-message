@@ -35,6 +35,7 @@ where
     let duration = timestamp
         .duration_since(UNIX_EPOCH)
         .expect("timestamps before unix epochs are invalid");
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
     let value = (duration.as_secs_f64() * 1000.) as u64;
     value.serialize(serializer)
 }

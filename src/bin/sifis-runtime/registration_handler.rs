@@ -4,13 +4,12 @@ use anyhow::{anyhow, Context};
 use log::{info, trace, warn};
 use serde::Deserialize;
 use sifis_dht::domocache::DomoCache;
-use sifis_message::{RequestMessage, LAMP_TOPIC_NAME};
+use sifis_message::LAMP_TOPIC_NAME;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::{
-    continuation::{self, Continuation},
-    domo_wot_bridge,
+    continuation, domo_wot_bridge,
     registration::{self, Registration, ThingTypeRegistration},
     ucs, AccessRequest, AccessRequestKind, PeerId, QueuedResponseMessage,
 };
@@ -22,7 +21,6 @@ pub(super) async fn handle_registration_message(
     ucs_topic_name: Arc<str>,
     ucs_topic_uuid: Arc<str>,
     response_sender: mpsc::Sender<QueuedResponseMessage>,
-    continuation_sender: mpsc::UnboundedSender<Continuation>,
 ) -> anyhow::Result<()> {
     let helper = Helper {
         domo_cache,
@@ -30,7 +28,6 @@ pub(super) async fn handle_registration_message(
         ucs_topic_name,
         ucs_topic_uuid,
         response_sender,
-        continuation_sender,
     };
 
     match message {
@@ -45,9 +42,6 @@ pub(super) async fn handle_registration_message(
             operation,
         } => helper.handle_thing(request_uuid, ty, operation).await,
 
-        Registration::Raw(request_message) => {
-            pub_request_message(&request_message, helper.domo_cache).await
-        }
         Registration::GetTopicName { name, responder } => {
             let response = helper.domo_cache.get_topic_name(&name);
             info!("GetTopicName for name {name} got a response: {response:#?}");
@@ -66,7 +60,6 @@ pub struct Helper<'a> {
     ucs_topic_name: Arc<str>,
     ucs_topic_uuid: Arc<str>,
     response_sender: mpsc::Sender<QueuedResponseMessage>,
-    continuation_sender: mpsc::UnboundedSender<Continuation>,
 }
 
 impl Helper<'_> {
@@ -77,7 +70,6 @@ impl Helper<'_> {
             ucs_topic_name,
             ucs_topic_uuid,
             response_sender,
-            continuation_sender: _,
         } = self;
 
         let message_id = Uuid::new_v4();
@@ -121,7 +113,6 @@ impl Helper<'_> {
             ucs_topic_name,
             ucs_topic_uuid,
             response_sender,
-            continuation_sender,
         } = self;
 
         match operation {
@@ -183,7 +174,9 @@ impl Helper<'_> {
                                 .map_err(|_| anyhow!("response sender channel is closed"))?;
                         }
                         registration::Lamp::SetOn { value, responder } => {
-                            use domo_wot_bridge::*;
+                            use domo_wot_bridge::{
+                                Command, CommandInner, TurnCommand, VolatileMessage,
+                            };
 
                             let message =
                                 VolatileMessage::new(Command::TurnCommand(CommandInner {
@@ -195,10 +188,20 @@ impl Helper<'_> {
                                 }));
 
                             domo_cache
-                                .pub_value(serde_json::to_value(message).context(
-                                    "unable to convert turn command for lamp into JSON",
-                                )?);
-                            todo!()
+                                .pub_value(
+                                    serde_json::to_value(message).context(
+                                        "unable to convert turn command for lamp into JSON",
+                                    )?,
+                                )
+                                .await;
+
+                            response_sender.send(
+                                QueuedResponseMessage::RegisterPersistentMessage {
+                                    topic_name: LAMP_TOPIC_NAME,
+                                    topic_uuid: thing_type.thing_uuid,
+                                    responder,
+                                },
+                            ).await.context("unable to send registration for persistent message, channel closed")?;
                         }
                     },
                 };
@@ -218,7 +221,6 @@ impl Helper<'_> {
             ucs_topic_name,
             ucs_topic_uuid,
             response_sender,
-            continuation_sender: _,
         } = self;
 
         let kind = to_ucs.access_request_kind();
@@ -271,18 +273,6 @@ impl Helper<'_> {
 
         Ok(())
     }
-}
-
-async fn pub_request_message(
-    request_message: &RequestMessage,
-    domo_cache: &mut DomoCache,
-) -> anyhow::Result<()> {
-    let request_message = serde_json::to_value(request_message)
-        .context("unable to convert thing description request to JSON")?;
-
-    trace!("Publishing request message: {request_message:#?}");
-    domo_cache.pub_value(request_message).await;
-    Ok(())
 }
 
 fn create_access_request(

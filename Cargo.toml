@@ -26,4 +26,3 @@ tarpc = { version = "0.31", features = ["tokio1", "serde-transport"] }
 tokio = { version = "1.26.0", features = ["macros", "time", "process"] }
 toml_edit = { version = "0.19.12", features = ["serde"] }
 uuid = { version = "1.4.0", features = ["v4", "serde"] }
-wot-td = { git = "https://github.com/sifis-home/wot-td" }
