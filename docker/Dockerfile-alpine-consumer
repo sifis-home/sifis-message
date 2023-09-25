@@ -1,0 +1,3 @@
+FROM arm64v8/alpine
+ADD sifis-consumer /
+ENTRYPOINT ["/sifis-consumer"]

@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT"
 description = "SIFIS-Home developer API runtime reference implementation"
 
+[features]
+default = []
+vendored = ["sifis-dht/vendored"]
+
 [dependencies]
 anyhow = "1.0.71"
 base64 = { version = "0.21.3", features = ["std", "alloc"] }

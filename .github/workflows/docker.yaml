@@ -1,0 +1,43 @@
+name: docker-aarch64
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'p*'
+jobs:
+  cross-compile:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+    - name: Install Cross
+      run: |
+        curl -L "https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-gnu.tar.gz" |
+        tar xz -C $HOME/.cargo/bin
+    - name: Cross compile for aarch64
+      run: |
+        cross build --release --target aarch64-unknown-linux-musl --features vendored
+    - name: Login to GitHub container registry (ghcr.io)
+      uses: docker/login-action@v2
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Build and push runtime
+      uses: docker/build-push-action@v4
+      with:
+        push: true
+        tags: ghcr.io/sifis-home/sifis-alpine-runtime-wot-ucon-arm64v8:latest
+        context: target/aarch64-unknown-linux-musl/release
+        file: docker/Dockerfile-alpine-runtime
+    - name: Build and push consumer
+      uses: docker/build-push-action@v4
+      with:
+        push: true
+        tags: ghcr.io/sifis-home/sifis-alpine-consumer-wot-arm64v8:latest
+        context: target/aarch64-unknown-linux-musl/release
+        file: docker/Dockerfile-alpine-consumer
