@@ -1,6 +1,9 @@
 pub mod request;
 pub mod try_access_request;
 
+#[cfg(test)]
+pub mod mock;
+
 use std::{
     borrow::Cow,
     fmt::{self, Display},
@@ -220,7 +223,7 @@ pub struct GenericCommand<'a, Command, Message> {
     pub value: MessageContainer<'a, Message>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RequestCommandType {
     PepCommand,
