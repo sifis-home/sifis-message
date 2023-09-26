@@ -386,6 +386,10 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|err| panic!("unable to remove old unix socket file: {err}"));
     }
 
+    run(cli).await
+}
+
+async fn run(cli: Cli) -> anyhow::Result<()> {
     let domo_cache = domo_cache_from_config(&cli.cache_config_file).await?;
     let (cache_sender, cache_receiver) = mpsc::channel(32);
     let (response_sender, response_receiver) = mpsc::channel(32);
@@ -1054,5 +1058,108 @@ async fn registration_handler(
         }
 
         send_registration().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{array, time::Duration};
+
+    use futures_concurrency::future::Race;
+    use futures_util::FutureExt;
+    use sifis_api::service::SifisApiClient;
+    use sifis_dht::domocache::DomoCache;
+    use sifis_message::{dump_sample_domo_cache, LAMP_TOPIC_NAME};
+    use tarpc::{context, tokio_serde::formats::Bincode, tokio_util::codec::LengthDelimitedCodec};
+    use tempdir::TempDir;
+    use tokio::{net::UnixStream, time::sleep};
+    use uuid::Uuid;
+
+    use super::{run, Cli};
+
+    async fn dummy_cli(temp_dir: &TempDir) -> Cli {
+        let cache_config_file = temp_dir.path().join("cache-config.toml");
+        let socket = temp_dir.path().join("sifis-runtime.sock");
+        let client_id = Uuid::new_v4().to_string().into();
+        let topic_name = Uuid::new_v4().to_string().into();
+        let topic_uuid = Some(Uuid::new_v4());
+        let ucs_topic_name = Uuid::new_v4().to_string().into();
+        let ucs_topic_uuid = Uuid::new_v4().to_string().into();
+
+        dump_sample_domo_cache(&cache_config_file).await.unwrap();
+
+        Cli {
+            cache_config_file,
+            dump: false,
+            socket,
+            client_id,
+            topic_name,
+            topic_uuid,
+            ucs_topic_name,
+            ucs_topic_uuid,
+        }
+    }
+
+    #[tokio::test]
+    async fn find_lamps() {
+        let temp_dir = TempDir::new("sifis-runtime-find-lamps").unwrap();
+        let cli = dummy_cli(&temp_dir).await;
+        let socket_file = cli.socket.clone();
+        let shared_key = toml_edit::de::from_str::<sifis_config::Cache>(
+            &std::fs::read_to_string(&cli.cache_config_file).unwrap(),
+        )
+        .unwrap()
+        .shared_key;
+
+        let mut domo_cache = DomoCache::new(sifis_config::Cache {
+            url: "sqlite::memory:".to_string(),
+            table: "sifis_runtime_find_lamps".to_owned(),
+            persistent: true,
+            private_key: None,
+            shared_key,
+            loopback: true,
+        })
+        .await
+        .unwrap();
+
+        (
+            run(cli).map(Result::unwrap),
+            async move {
+                let lamps: [_; 3] = array::from_fn(|_| Uuid::new_v4());
+                for lamp in &lamps {
+                    domo_cache
+                        .write_value(LAMP_TOPIC_NAME, &lamp.to_string(), serde_json::Value::Null)
+                        .await;
+                }
+
+                tokio::spawn(async move {
+                    loop {
+                        domo_cache.cache_event_loop().await.unwrap();
+                    }
+                });
+
+                let codec_builder = LengthDelimitedCodec::builder();
+                let stream = UnixStream::connect(socket_file).await.unwrap();
+                let framed = codec_builder.new_framed(stream);
+                let transport = tarpc::serde_transport::new(framed, Bincode::default());
+                let tarpc_client =
+                    SifisApiClient::new(tarpc::client::Config::default(), transport).spawn();
+
+                let received_lamps = tarpc_client
+                    .find_lamps(context::current())
+                    .await
+                    .unwrap()
+                    .unwrap();
+
+                assert_eq!(received_lamps.len(), lamps.len());
+                for lamp in &received_lamps {
+                    let lamp_uuid: Uuid = lamp.parse().unwrap();
+                    assert!(lamps.contains(&lamp_uuid));
+                }
+            }
+            .boxed(),
+        )
+            .race()
+            .await;
     }
 }
