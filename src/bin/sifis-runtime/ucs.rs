@@ -229,7 +229,7 @@ pub enum RequestCommandType {
     PepCommand,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ResponseCommandType {
     UcsCommand,
