@@ -11,7 +11,7 @@ use std::{
     ffi::c_int,
     fmt::{self, Display},
     ops::Not,
-    os::fd::AsRawFd,
+    os::fd::AsFd,
     path::{Path, PathBuf},
     sync::{
         atomic::{self, AtomicBool},
@@ -518,7 +518,7 @@ where
         let framed = codec_builder.new_framed(conn);
         let transport = tarpc::serde_transport::new(framed, Bincode::default());
         let peer = transport.get_ref();
-        let peer_id = PeerId(sifis_api::runtime::peer_pid(peer.as_raw_fd()));
+        let peer_id = PeerId(sifis_api::runtime::peer_pid(peer.as_fd()));
 
         let fut = BaseChannel::with_defaults(transport).execute(serve_fn(peer_id));
         tokio::spawn(fut);
