@@ -209,8 +209,9 @@ pub async fn handle_responses(
 ) -> Result<(), Error> {
     loop {
         let response = response_receiver
-            .try_recv()
-            .map_err(|_| Error::ResponseChannelClosed)?;
+            .recv()
+            .await
+            .ok_or(Error::ResponseChannelClosed)?;
 
         cache_sender
             .send(response)

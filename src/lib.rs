@@ -33,12 +33,30 @@ pub async fn domo_cache_from_config(config_path: &Path) -> anyhow::Result<DomoCa
     Ok(domo_cache)
 }
 
-pub async fn dump_sample_domo_cache(config_path: &Path) -> anyhow::Result<()> {
+#[must_use]
+pub fn generate_domo_cache_shared_key() -> String {
     let mut rng = thread_rng();
     let mut shared_key = String::with_capacity(64);
     for _ in 0..32 {
         write!(shared_key, "{:02x}", rng.gen::<u8>()).unwrap();
     }
+    shared_key
+}
+
+pub async fn dump_domo_cache(
+    config: &sifis_config::Cache,
+    config_path: &Path,
+) -> anyhow::Result<()> {
+    let config_string = toml_edit::ser::to_string_pretty(&config)
+        .context("unable to convert sifis cache config to TOML")?;
+    tokio::fs::write(config_path, &config_string)
+        .await
+        .context("unable to write sifis cache config to TOML file")?;
+    Ok(())
+}
+
+pub async fn dump_sample_domo_cache(config_path: &Path) -> anyhow::Result<()> {
+    let shared_key = generate_domo_cache_shared_key();
 
     let config = sifis_config::Cache {
         url: "sqlite::memory:".to_string(),
@@ -49,12 +67,7 @@ pub async fn dump_sample_domo_cache(config_path: &Path) -> anyhow::Result<()> {
         loopback: true,
     };
 
-    let config_string = toml_edit::ser::to_string_pretty(&config)
-        .context("unable to convert sifis cache config to TOML")?;
-    tokio::fs::write(config_path, &config_string)
-        .await
-        .context("unable to write sifis cache config to TOML file")?;
-    Ok(())
+    dump_domo_cache(&config, config_path).await
 }
 
 pub fn manage_domo_cache<T, E, F>(

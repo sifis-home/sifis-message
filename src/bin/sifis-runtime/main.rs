@@ -1067,17 +1067,27 @@ mod tests {
 
     use futures_concurrency::future::Race;
     use futures_util::FutureExt;
+    use rand::{distributions::Uniform, thread_rng, Rng};
     use sifis_api::service::SifisApiClient;
     use sifis_dht::domocache::DomoCache;
-    use sifis_message::{dump_sample_domo_cache, LAMP_TOPIC_NAME};
+    use sifis_message::{dump_domo_cache, generate_domo_cache_shared_key, LAMP_TOPIC_NAME};
     use tarpc::{context, tokio_serde::formats::Bincode, tokio_util::codec::LengthDelimitedCodec};
     use tempdir::TempDir;
     use tokio::{net::UnixStream, time::sleep};
     use uuid::Uuid;
 
+    use crate::ucs;
+
     use super::{run, Cli};
 
-    async fn dummy_cli(temp_dir: &TempDir) -> Cli {
+    fn generate_table_name() -> String {
+        let rng = thread_rng();
+        rng.sample_iter(Uniform::new('a', char::from(b'z' + 1)))
+            .take(20)
+            .collect()
+    }
+
+    async fn dummy_cli(temp_dir: &TempDir) -> (Cli, String) {
         let cache_config_file = temp_dir.path().join("cache-config.toml");
         let socket = temp_dir.path().join("sifis-runtime.sock");
         let client_id = Uuid::new_v4().to_string().into();
@@ -1086,9 +1096,19 @@ mod tests {
         let ucs_topic_name = Uuid::new_v4().to_string().into();
         let ucs_topic_uuid = Uuid::new_v4().to_string().into();
 
-        dump_sample_domo_cache(&cache_config_file).await.unwrap();
+        let shared_key = generate_domo_cache_shared_key();
+        let config = sifis_config::Cache {
+            url: "sqlite::memory:".to_string(),
+            table: generate_table_name(),
+            persistent: true,
+            private_key: None,
+            shared_key: shared_key.clone(),
+            loopback: false,
+        };
 
-        Cli {
+        dump_domo_cache(&config, &cache_config_file).await.unwrap();
+
+        let cli = Cli {
             cache_config_file,
             dump: false,
             socket,
@@ -1097,38 +1117,57 @@ mod tests {
             topic_uuid,
             ucs_topic_name,
             ucs_topic_uuid,
-        }
+        };
+
+        (cli, shared_key)
     }
 
     #[tokio::test]
     async fn find_lamps() {
+        let _ = env_logger::try_init();
+
         let temp_dir = TempDir::new("sifis-runtime-find-lamps").unwrap();
-        let cli = dummy_cli(&temp_dir).await;
+        let (cli, shared_key) = dummy_cli(&temp_dir).await;
         let socket_file = cli.socket.clone();
-        let shared_key = toml_edit::de::from_str::<sifis_config::Cache>(
-            &std::fs::read_to_string(&cli.cache_config_file).unwrap(),
-        )
-        .unwrap()
-        .shared_key;
 
         let mut domo_cache = DomoCache::new(sifis_config::Cache {
             url: "sqlite::memory:".to_string(),
-            table: "sifis_runtime_find_lamps".to_owned(),
+            table: generate_table_name(),
             persistent: true,
             private_key: None,
-            shared_key,
-            loopback: true,
+            shared_key: shared_key.clone(),
+            loopback: false,
         })
         .await
         .unwrap();
 
+        let ucs = ucs::mock::Mock {
+            cache_config: sifis_config::Cache {
+                url: "sqlite::memory:".to_string(),
+                table: generate_table_name(),
+                persistent: true,
+                private_key: None,
+                shared_key,
+                loopback: false,
+            },
+            ucs_topic_name: "ucs_topic_name".to_owned(),
+            ucs_topic_uuid: "ucs_topic_uuid".to_owned(),
+        };
+
         (
             run(cli).map(Result::unwrap),
+            ucs.start()
+                .map(|result| {
+                    result.unwrap();
+                })
+                .boxed_local(),
             async move {
+                sleep(Duration::from_secs(5)).await;
+
                 let lamps: [_; 3] = array::from_fn(|_| Uuid::new_v4());
-                for lamp in &lamps {
+                for lamp in lamps {
                     domo_cache
-                        .write_value(LAMP_TOPIC_NAME, &lamp.to_string(), serde_json::Value::Null)
+                        .write_value(LAMP_TOPIC_NAME, &lamp.to_string(), serde_json::json!({}))
                         .await;
                 }
 
@@ -1137,6 +1176,8 @@ mod tests {
                         domo_cache.cache_event_loop().await.unwrap();
                     }
                 });
+
+                sleep(Duration::from_secs(10)).await;
 
                 let codec_builder = LengthDelimitedCodec::builder();
                 let stream = UnixStream::connect(socket_file).await.unwrap();
