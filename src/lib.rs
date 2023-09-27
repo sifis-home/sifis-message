@@ -61,10 +61,10 @@ pub fn manage_domo_cache<T, E, F>(
     domo_cache: DomoCache,
     message_receiver: mpsc::Receiver<T>,
     message_handler: F,
-) -> impl Stream<Item = Result<DomoEvent, Box<dyn std::error::Error>>>
+) -> impl Stream<Item = Result<DomoEvent, E>>
 where
     T: 'static + Debug,
-    E: Into<Box<dyn std::error::Error>>,
+    sifis_dht::Error: Into<E>,
     F: for<'a> Fn(T, &'a mut DomoCache) -> Pin<Box<dyn Future<Output = Result<(), E>> + 'a>>
         + Clone,
 {
@@ -80,10 +80,10 @@ async fn manage_domo_cache_inner<T, E, F>(
     mut domo_cache: DomoCache,
     mut message_receiver: mpsc::Receiver<T>,
     message_handler: F,
-) -> Result<Option<(DomoEvent, (DomoCache, mpsc::Receiver<T>))>, Box<dyn std::error::Error>>
+) -> Result<Option<(DomoEvent, (DomoCache, mpsc::Receiver<T>))>, E>
 where
     T: 'static + Debug,
-    E: Into<Box<dyn std::error::Error>>,
+    sifis_dht::Error: Into<E>,
     F: for<'a> Fn(T, &'a mut DomoCache) -> Pin<Box<dyn Future<Output = Result<(), E>> + 'a>>,
 {
     loop {
@@ -92,7 +92,7 @@ where
                 debug!("Received event from domo cache: {result:#?}");
                 return result.map(|domo_event| {
                     Some((domo_event, (domo_cache, message_receiver)))
-                });
+                }).map_err(Into::into);
             }
 
             // This is cancel safe, therefore it is fine
@@ -100,7 +100,7 @@ where
                 debug!("Received message from domo receiver: {message:#?}");
                 match message {
                     Some(message) => {
-                        message_handler(message, &mut domo_cache).await.map_err(Into::into)?;
+                        message_handler(message, &mut domo_cache).await?;
                     },
                     None => break,
                 }
@@ -112,6 +112,7 @@ where
         .cache_event_loop()
         .await
         .map(|domo_event| Some((domo_event, (domo_cache, message_receiver))))
+        .map_err(Into::into)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
