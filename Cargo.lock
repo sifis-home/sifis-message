@@ -3514,6 +3514,16 @@ dependencies = [
 [[package]]
 name = "sifis-config"
 version = "0.1.0"
+source = "git+https://github.com/sifis-home/libp2p-rust-dht.git?branch=dht-cache-reshape#37210e4eb5ea2255f029b36c079cf61bdca5d201"
+dependencies = [
+ "clap",
+ "figment",
+ "serde",
+]
+
+[[package]]
+name = "sifis-config"
+version = "0.1.0"
 source = "git+https://github.com/sifis-home/libp2p-rust-dht.git#1b9f0c0d5ecf82521f3e66dd83b9b2ca45fb8de3"
 dependencies = [
  "clap",
@@ -3524,10 +3534,12 @@ dependencies = [
 [[package]]
 name = "sifis-dht"
 version = "0.1.0"
-source = "git+https://github.com/sifis-home/libp2p-rust-dht.git#1b9f0c0d5ecf82521f3e66dd83b9b2ca45fb8de3"
+source = "git+https://github.com/sifis-home/libp2p-rust-dht.git?branch=dht-cache-reshape#37210e4eb5ea2255f029b36c079cf61bdca5d201"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures",
+ "futures-concurrency",
  "futures-util",
  "jsonpath_lib",
  "libp2p",
@@ -3541,10 +3553,12 @@ dependencies = [
  "sea-query-binder",
  "serde",
  "serde_json",
- "sifis-config",
+ "sifis-config 0.1.0 (git+https://github.com/sifis-home/libp2p-rust-dht.git?branch=dht-cache-reshape)",
  "sqlx",
+ "thiserror",
  "time",
  "tokio",
+ "tokio-stream",
  "url",
 ]
 
@@ -3568,7 +3582,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sifis-api",
- "sifis-config",
+ "sifis-config 0.1.0 (git+https://github.com/sifis-home/libp2p-rust-dht.git)",
  "sifis-dht",
  "tarpc",
  "tokio",
