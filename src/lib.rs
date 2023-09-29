@@ -3,22 +3,22 @@ mod deser;
 use std::{
     borrow::Cow,
     fmt::{Debug, Write},
-    future::Future,
     path::Path,
-    pin::Pin,
 };
 
-use anyhow::{anyhow, Context};
-use futures_util::{stream, Stream};
-use log::debug;
+use anyhow::Context;
+use futures_util::Stream;
 use rand::{thread_rng, Rng};
 use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
-use sifis_dht::domocache::{DomoCache, DomoEvent};
-use tokio::{select, sync::mpsc};
 use uuid::Uuid;
 
-pub async fn domo_cache_from_config(config_path: &Path) -> anyhow::Result<DomoCache> {
+pub async fn dht_cache_and_stream_from_config(
+    config_path: &Path,
+) -> anyhow::Result<(
+    sifis_dht::cache::Cache,
+    impl Stream<Item = sifis_dht::cache::Event>,
+)> {
     let cache_config = toml_edit::de::from_slice(
         &tokio::fs::read(config_path)
             .await
@@ -26,11 +26,12 @@ pub async fn domo_cache_from_config(config_path: &Path) -> anyhow::Result<DomoCa
     )
     .context("unable to deserialize cache TOML config file")?;
 
-    let domo_cache = DomoCache::new(cache_config)
+    let (dht_cache, dht_events_stream) = sifis_dht::cache::Builder::from_config(cache_config)
+        .make_channel()
         .await
-        .map_err(|err| anyhow!("unable to create domo cache: {err:?}"))?;
+        .context("unable to create dht cache")?;
 
-    Ok(domo_cache)
+    Ok((dht_cache, dht_events_stream))
 }
 
 pub async fn dump_sample_domo_cache(config_path: &Path) -> anyhow::Result<()> {
@@ -55,64 +56,6 @@ pub async fn dump_sample_domo_cache(config_path: &Path) -> anyhow::Result<()> {
         .await
         .context("unable to write sifis cache config to TOML file")?;
     Ok(())
-}
-
-pub fn manage_domo_cache<T, E, F>(
-    domo_cache: DomoCache,
-    message_receiver: mpsc::Receiver<T>,
-    message_handler: F,
-) -> impl Stream<Item = Result<DomoEvent, E>>
-where
-    T: 'static + Debug,
-    sifis_dht::Error: Into<E>,
-    F: for<'a> Fn(T, &'a mut DomoCache) -> Pin<Box<dyn Future<Output = Result<(), E>> + 'a>>
-        + Clone,
-{
-    stream::try_unfold(
-        (domo_cache, message_receiver),
-        move |(domo_cache, receiver)| {
-            manage_domo_cache_inner(domo_cache, receiver, message_handler.clone())
-        },
-    )
-}
-
-async fn manage_domo_cache_inner<T, E, F>(
-    mut domo_cache: DomoCache,
-    mut message_receiver: mpsc::Receiver<T>,
-    message_handler: F,
-) -> Result<Option<(DomoEvent, (DomoCache, mpsc::Receiver<T>))>, E>
-where
-    T: 'static + Debug,
-    sifis_dht::Error: Into<E>,
-    F: for<'a> Fn(T, &'a mut DomoCache) -> Pin<Box<dyn Future<Output = Result<(), E>> + 'a>>,
-{
-    loop {
-        select! {
-            result = domo_cache.cache_event_loop() => {
-                debug!("Received event from domo cache: {result:#?}");
-                return result.map(|domo_event| {
-                    Some((domo_event, (domo_cache, message_receiver)))
-                }).map_err(Into::into);
-            }
-
-            // This is cancel safe, therefore it is fine
-            message = message_receiver.recv() => {
-                debug!("Received message from domo receiver: {message:#?}");
-                match message {
-                    Some(message) => {
-                        message_handler(message, &mut domo_cache).await?;
-                    },
-                    None => break,
-                }
-            }
-        }
-    }
-
-    domo_cache
-        .cache_event_loop()
-        .await
-        .map(|domo_event| Some((domo_event, (domo_cache, message_receiver))))
-        .map_err(Into::into)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

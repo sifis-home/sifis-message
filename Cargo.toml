@@ -30,6 +30,7 @@ sifis-config = { git = "https://github.com/sifis-home/libp2p-rust-dht.git" }
 sifis-dht = { git = "https://github.com/sifis-home/libp2p-rust-dht.git", branch = "dht-cache-reshape" }
 tarpc = { version = "0.33.0", features = ["tokio1", "serde-transport"] }
 tokio = { version = "1.26.0", features = ["macros", "time", "process"] }
+tokio-stream = "0.1.14"
 toml_edit = { version = "0.19.12", features = ["serde"] }
 uuid = { version = "1.4.0", features = ["v4", "serde"] }
 wot-td = { git = "https://github.com/sifis-home/wot-td" }

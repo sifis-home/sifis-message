@@ -2,19 +2,19 @@
 
 use std::{cell::OnceCell, ops::Not, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{bail, Context};
 use clap::Parser;
 use cli::{Cli, ThingType};
-use futures_concurrency::future::TryJoin;
-use futures_util::{stream::FuturesUnordered, FutureExt, TryStreamExt};
+use futures_concurrency::future::{Race, TryJoin};
+use futures_util::{stream::FuturesUnordered, FutureExt, Stream, StreamExt, TryStreamExt};
 use log::{debug, info, trace, warn};
 use reqwest::{Client, Url};
-use sifis_dht::domocache::{DomoCache, DomoEvent};
 use sifis_message::{
-    domo_cache_from_config, manage_domo_cache, Authorization, InternalResponseMessage,
-    RequestMessage, ResponseMessageType, LAMP_TOPIC_NAME, SINK_TOPIC_NAME,
+    dht_cache_and_stream_from_config, Authorization, InternalResponseMessage, RequestMessage,
+    ResponseMessageType, LAMP_TOPIC_NAME, SINK_TOPIC_NAME,
 };
 use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 mod cli;
@@ -24,7 +24,8 @@ async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let cli = Cli::parse();
 
-    let domo_cache = domo_cache_from_config(&cli.cache_config_file).await?;
+    let (dht_cache, dht_events_stream) =
+        dht_cache_and_stream_from_config(&cli.cache_config_file).await?;
     info!("Created domo cache from config");
 
     let (things_with_uuid, mut children) =
@@ -66,7 +67,8 @@ async fn main() -> anyhow::Result<()> {
     if let Err(err) = (
         handle_things(
             Arc::clone(&things_with_uuid),
-            domo_cache,
+            &dht_cache,
+            dht_events_stream,
             client.clone(),
             message_sender.clone(),
             message_receiver,
@@ -129,27 +131,14 @@ enum Message {
 
 async fn handle_things(
     things_with_uuid: Arc<Vec<ThingRepr>>,
-    domo_cache: DomoCache,
+    dht_cache: &sifis_dht::cache::Cache,
+    dht_events_stream: impl Stream<Item = sifis_dht::cache::Event>,
     client: Client,
     message_sender: mpsc::Sender<Message>,
     message_receiver: mpsc::Receiver<Message>,
 ) -> anyhow::Result<()> {
-    Box::pin(manage_domo_cache(
-        domo_cache,
-        message_receiver,
-        move |message, domo_cache| {
-            handle_message(
-                message,
-                domo_cache,
-                Arc::clone(&things_with_uuid),
-                client.clone(),
-            )
-            .boxed()
-        },
-    ))
-    .map_err(|err| anyhow!("error while managing domo cache: {err}"))
-    .try_for_each(|event| async {
-        let DomoEvent::VolatileData(volatile_data) = event else {
+    let stream_handler = dht_events_stream.map(Ok).try_for_each(|event| async {
+        let sifis_dht::cache::Event::VolatileData(volatile_data) = event else {
             return Ok(());
         };
 
@@ -165,28 +154,39 @@ async fn handle_things(
             warn!("message receiver for domo cache is unexpectedly closed");
         }
         Ok(())
-    })
-    .await?;
+    });
 
-    Ok(())
+    let messages_handler = ReceiverStream::new(message_receiver)
+        .map(Ok)
+        .try_for_each(|message| {
+            handle_message(
+                message,
+                dht_cache,
+                Arc::clone(&things_with_uuid),
+                client.clone(),
+            )
+        });
+
+    (stream_handler, messages_handler).race().await
 }
 
 async fn handle_message(
     message: Message,
-    domo_cache: &mut DomoCache,
+    dht_cache: &sifis_dht::cache::Cache,
     things_with_uuid: Arc<Vec<ThingRepr>>,
     client: Client,
 ) -> anyhow::Result<()> {
     trace!("Handling message: {message:#?}");
     match message {
         Message::Request(request_message) => {
-            handle_request_message(request_message, domo_cache, things_with_uuid, client).await
+            handle_request_message(request_message, dht_cache, things_with_uuid, client).await
         }
         Message::RegisterThing { topic, uuid } => {
             info!("Registering {uuid} on topic {topic}");
-            domo_cache
-                .write_value(&topic, &uuid.to_string(), serde_json::Value::Null)
-                .await;
+            dht_cache
+                .put(&topic, &uuid.to_string(), serde_json::Value::Null)
+                .await
+                .context("unable to register thing to DHT")?;
             Ok(())
         }
     }
@@ -194,7 +194,7 @@ async fn handle_message(
 
 async fn handle_request_message(
     message: RequestMessage,
-    domo_cache: &mut DomoCache,
+    dht_cache: &sifis_dht::cache::Cache,
     things_with_uuid: Arc<Vec<ThingRepr>>,
     client: Client,
 ) -> anyhow::Result<()> {
@@ -274,11 +274,9 @@ async fn handle_request_message(
     };
 
     trace!("Sending response: {response:#?}");
-    domo_cache
-        .pub_value(
-            serde_json::to_value(response).context("unable to convert response body to json")?,
-        )
-        .await;
+    dht_cache
+        .send(serde_json::to_value(response).context("unable to convert response body to json")?)
+        .context("unable to send response message to DHT")?;
 
     Ok(())
 }

@@ -27,7 +27,7 @@ pub(super) enum Registration {
     Raw(RequestMessage),
     GetTopicName {
         name: String,
-        responder: oneshot::Sender<Result<serde_json::Value, String>>,
+        responder: oneshot::Sender<Vec<String>>,
     },
     RegisterToUcs {
         topic_name: Arc<str>,
@@ -96,9 +96,7 @@ pub(super) enum ThingOperation {
 }
 
 impl Registration {
-    pub(super) fn get_topic_name(
-        name: impl Into<String>,
-    ) -> (Self, Receiver<Result<serde_json::Value, String>>) {
+    pub(super) fn get_topic_name(name: impl Into<String>) -> (Self, Receiver<Vec<String>>) {
         let name = name.into();
         info!(r#"get_topic_name run with name "{name}""#);
         Self::build(|_request_uuid, responder| Self::GetTopicName { name, responder })

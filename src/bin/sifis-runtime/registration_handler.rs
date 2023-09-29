@@ -2,7 +2,6 @@ use std::{borrow::Cow, sync::Arc};
 
 use anyhow::Context;
 use log::{debug, info, trace, warn};
-use sifis_dht::domocache::DomoCache;
 use sifis_message::RequestMessage;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -15,7 +14,7 @@ use crate::{
 
 pub(super) async fn handle_registration_message(
     message: Registration,
-    domo_cache: &mut DomoCache,
+    dht_cache: &sifis_dht::cache::Cache,
     client_id: Arc<str>,
     ucs_topic_name: Arc<str>,
     ucs_topic_uuid: Arc<str>,
@@ -23,7 +22,7 @@ pub(super) async fn handle_registration_message(
     continuation_sender: mpsc::UnboundedSender<Continuation>,
 ) -> anyhow::Result<()> {
     let helper = Helper {
-        domo_cache,
+        dht_cache,
         client_id,
         ucs_topic_name,
         ucs_topic_uuid,
@@ -43,11 +42,12 @@ pub(super) async fn handle_registration_message(
             operation,
         } => helper.handle_thing(request_uuid, ty, operation).await,
 
-        Registration::Raw(request_message) => {
-            pub_request_message(&request_message, helper.domo_cache).await
-        }
+        Registration::Raw(request_message) => pub_request_message(&request_message, dht_cache),
         Registration::GetTopicName { name, responder } => {
-            let response = helper.domo_cache.get_topic_name(&name);
+            let query = dht_cache.query(&name);
+            let query = query.get().await;
+            let response = query.iter().map(|(uuid, _)| uuid.to_owned()).collect();
+
             info!("GetTopicName for name {name} got a response: {response:#?}");
             if responder.send(response).is_err() {
                 warn!("cannot respond to get_topic_name, channel closed");
@@ -59,7 +59,7 @@ pub(super) async fn handle_registration_message(
 }
 
 pub struct Helper<'a> {
-    domo_cache: &'a mut DomoCache,
+    dht_cache: &'a sifis_dht::cache::Cache,
     client_id: Arc<str>,
     ucs_topic_name: Arc<str>,
     ucs_topic_uuid: Arc<str>,
@@ -70,7 +70,7 @@ pub struct Helper<'a> {
 impl Helper<'_> {
     async fn register_to_ucs(self, topic_name: Arc<str>, topic_uuid: Uuid) -> anyhow::Result<()> {
         let Self {
-            domo_cache,
+            dht_cache,
             client_id,
             ucs_topic_name,
             ucs_topic_uuid,
@@ -96,12 +96,12 @@ impl Helper<'_> {
             topic_name: Cow::Borrowed(&ucs_topic_name),
             topic_uuid: Cow::Borrowed(&ucs_topic_uuid),
         });
-        domo_cache
-            .pub_value(
+        dht_cache
+            .send(
                 serde_json::to_value(request)
                     .context("unable to convert pep command request to JSON")?,
             )
-            .await;
+            .context("unable to send request to DHT cache")?;
         trace!("Published registration message to UCS through DHT");
 
         Ok(())
@@ -114,7 +114,7 @@ impl Helper<'_> {
         operation: registration::ThingOperation,
     ) -> anyhow::Result<()> {
         let Self {
-            domo_cache,
+            dht_cache,
             client_id,
             ucs_topic_name,
             ucs_topic_uuid,
@@ -152,12 +152,12 @@ impl Helper<'_> {
                     topic_uuid: Cow::Borrowed(&ucs_topic_uuid),
                 });
 
-                domo_cache
-                    .pub_value(
+                dht_cache
+                    .send(
                         serde_json::to_value(message)
                             .context("unable to convert pep command request to JSON")?,
                     )
-                    .await;
+                    .context("unable to send message to DHT")?;
             }
 
             registration::ThingOperation::Interact => {
@@ -179,7 +179,7 @@ impl Helper<'_> {
                 debug!("Waiting done event");
                 done_receiver.await.context("done channel is closed")?;
 
-                pub_request_message(&request_message, domo_cache).await?;
+                pub_request_message(&request_message, dht_cache)?;
             }
         }
 
@@ -191,7 +191,7 @@ impl Helper<'_> {
         use ucs::AfterTryRequestPurpose;
 
         let Self {
-            domo_cache,
+            dht_cache,
             client_id,
             ucs_topic_name,
             ucs_topic_uuid,
@@ -240,26 +240,28 @@ impl Helper<'_> {
             topic_uuid: Cow::Borrowed(&ucs_topic_uuid),
         });
 
-        domo_cache
-            .pub_value(
+        dht_cache
+            .send(
                 serde_json::to_value(message)
                     .context("unable to convert pep command request to JSON")?,
             )
-            .await;
+            .context("unable to send message to DHT")?;
 
         Ok(())
     }
 }
 
-async fn pub_request_message(
+fn pub_request_message(
     request_message: &RequestMessage,
-    domo_cache: &mut DomoCache,
+    dht_cache: &sifis_dht::cache::Cache,
 ) -> anyhow::Result<()> {
     let request_message = serde_json::to_value(request_message)
         .context("unable to convert thing description request to JSON")?;
 
     trace!("Publishing request message: {request_message:#?}");
-    domo_cache.pub_value(request_message).await;
+    dht_cache
+        .send(request_message)
+        .context("unable to send message to DHT cache")?;
     Ok(())
 }
 

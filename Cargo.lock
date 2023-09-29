@@ -3586,6 +3586,7 @@ dependencies = [
  "sifis-dht",
  "tarpc",
  "tokio",
+ "tokio-stream",
  "toml_edit 0.19.15",
  "uuid",
  "wot-td",

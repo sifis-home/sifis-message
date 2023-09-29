@@ -24,7 +24,7 @@ use anyhow::{anyhow, bail, Context};
 use clap::Parser;
 use continuation::Continuation;
 use futures_concurrency::future::Race;
-use futures_util::{FutureExt, TryStreamExt};
+use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use log::{debug, error, info, trace, warn};
 use registration::{Registration, ResponseError, ResponseSender};
 use registration_handler::handle_registration_message;
@@ -33,9 +33,8 @@ use sifis_api::{
     service::{Error as SifisApiError, SifisApi},
     DoorLockStatus, Hazard,
 };
-use sifis_dht::domocache::DomoEvent;
 use sifis_message::{
-    domo_cache_from_config, dump_sample_domo_cache, manage_domo_cache, GetTopicNameEntry,
+    dht_cache_and_stream_from_config, dump_sample_domo_cache, GetTopicNameEntry,
     InternalResponseMessage, LAMP_TOPIC_NAME, SINK_TOPIC_NAME,
 };
 use tarpc::{
@@ -48,6 +47,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::{self, sleep, Instant},
 };
+use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -94,7 +94,7 @@ impl SifisApi for SifisToDht {
     #[inline]
     async fn find_lamps(self, _: tarpc::context::Context) -> Result<Vec<String>, SifisApiError> {
         trace!("Request to find lamps");
-        find_by_topic(&self.cache_sender, LAMP_TOPIC_NAME).await
+        Ok(find_by_topic(&self.cache_sender, LAMP_TOPIC_NAME).await)
     }
 
     async fn turn_lamp_on(
@@ -163,7 +163,7 @@ impl SifisApi for SifisToDht {
     #[inline]
     async fn find_sinks(self, _: tarpc::context::Context) -> Result<Vec<String>, SifisApiError> {
         trace!("Request to find sinks");
-        find_by_topic(&self.cache_sender, SINK_TOPIC_NAME).await
+        Ok(find_by_topic(&self.cache_sender, SINK_TOPIC_NAME).await)
     }
 
     async fn set_sink_flow(
@@ -386,7 +386,8 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|err| panic!("unable to remove old unix socket file: {err}"));
     }
 
-    let domo_cache = domo_cache_from_config(&cli.cache_config_file).await?;
+    let (dht_cache, dht_events_stream) =
+        dht_cache_and_stream_from_config(&cli.cache_config_file).await?;
     let (cache_sender, cache_receiver) = mpsc::channel(32);
     let (response_sender, response_receiver) = mpsc::channel(32);
     let (continuation_sender, continuation_receiver) = mpsc::unbounded_channel();
@@ -416,27 +417,23 @@ async fn main() -> anyhow::Result<()> {
 
     let registered_to_ucs = AtomicBool::new(false);
     (
-        Box::pin(manage_domo_cache(domo_cache, cache_receiver, {
-            let response_sender = response_sender.clone();
-            let continuation_sender = continuation_sender.clone();
-            let ucs_topic_name = Arc::clone(&ucs_topic_name);
-            move |message, domo_cache| {
+        dht_events_stream.map(Ok).try_for_each(|event| {
+            handle_domo_event(event, &topic_name, &topic_uuid_str, &response_sender)
+        }),
+        ReceiverStream::new(cache_receiver)
+            .map(Ok)
+            .try_for_each(|message| async {
                 handle_registration_message(
                     message,
-                    domo_cache,
+                    &dht_cache,
                     Arc::clone(&client_id),
                     Arc::clone(&ucs_topic_name),
                     Arc::clone(&ucs_topic_uuid),
                     response_sender.clone(),
                     continuation_sender.clone(),
                 )
-                .boxed()
-            }
-        }))
-        .map_err(|err| anyhow!("error while managing domo cache: {err}"))
-        .try_for_each(|event| {
-            handle_domo_event(event, &topic_name, &topic_uuid_str, &response_sender)
-        }),
+                .await
+            }),
         handle_responses(
             response_receiver,
             &registered_to_ucs,
@@ -453,12 +450,12 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn handle_domo_event(
-    event: DomoEvent,
+    event: sifis_dht::cache::Event,
     topic_name: &str,
     topic_uuid_str: &str,
     response_sender: &mpsc::Sender<QueuedResponseMessage>,
 ) -> anyhow::Result<()> {
-    let DomoEvent::VolatileData(volatile_data) = event else {
+    let sifis_dht::cache::Event::VolatileData(volatile_data) = event else {
         return Ok(());
     };
 
@@ -538,29 +535,20 @@ impl Display for PeerId {
 async fn find_by_topic(
     cache_sender: &mpsc::Sender<Registration>,
     topic_name: impl Into<String>,
-) -> Result<Vec<String>, SifisApiError> {
+) -> Vec<String> {
     let (registration, response_receiver) = Registration::get_topic_name(topic_name);
     cache_sender
         .send(registration)
         .await
         .expect("unable to write into cache wrapper channel");
 
-    let raw_topic_names = response_receiver
+    let topic_uuids = response_receiver
         .await
-        .expect("unable to get message from responder")
-        .map_err(SifisApiError::NotFound)?;
+        .expect("unable to get message from responder");
 
-    debug!("Received response for get_topic_name: {raw_topic_names:#?}");
+    debug!("Received response for get_topic_name: {topic_uuids:#?}");
 
-    serde_json::from_value::<GetTopicNameResponse<()>>(raw_topic_names)
-        .map_err(|err| SifisApiError::NotFound(err.to_string()))
-        .map(|entries| {
-            entries
-                .0
-                .into_iter()
-                .map(|entry| entry.topic_uuid)
-                .collect()
-        })
+    topic_uuids
 }
 
 async fn handle_responses(
