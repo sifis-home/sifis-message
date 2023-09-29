@@ -6,7 +6,6 @@ use std::{
     time::Duration,
 };
 
-use log::info;
 use pin_project_lite::pin_project;
 use sifis_message::RequestMessage;
 use tokio::{
@@ -25,10 +24,6 @@ pub(super) enum Registration {
         operation: ThingOperation,
     },
     Raw(RequestMessage),
-    GetTopicName {
-        name: String,
-        responder: oneshot::Sender<Vec<String>>,
-    },
     RegisterToUcs {
         topic_name: Arc<str>,
         topic_uuid: Uuid,
@@ -96,12 +91,6 @@ pub(super) enum ThingOperation {
 }
 
 impl Registration {
-    pub(super) fn get_topic_name(name: impl Into<String>) -> (Self, Receiver<Vec<String>>) {
-        let name = name.into();
-        info!(r#"get_topic_name run with name "{name}""#);
-        Self::build(|_request_uuid, responder| Self::GetTopicName { name, responder })
-    }
-
     pub(super) fn lamp_on_off(thing_uuid: Uuid, peer_id: PeerId) -> (Self, ResponseReceiver<bool>) {
         Self::build(|request_uuid, responder| Self::Thing {
             request_uuid,

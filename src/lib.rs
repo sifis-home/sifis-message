@@ -168,10 +168,3 @@ pub enum ResponseMessageType {
 
 pub const LAMP_TOPIC_NAME: &str = "sifis_lamp";
 pub const SINK_TOPIC_NAME: &str = "sifis_sink";
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct GetTopicNameEntry<T> {
-    pub topic_name: String,
-    pub topic_uuid: String,
-    pub value: T,
-}

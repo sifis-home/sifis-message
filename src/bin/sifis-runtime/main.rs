@@ -34,8 +34,8 @@ use sifis_api::{
     DoorLockStatus, Hazard,
 };
 use sifis_message::{
-    dht_cache_and_stream_from_config, dump_sample_domo_cache, GetTopicNameEntry,
-    InternalResponseMessage, LAMP_TOPIC_NAME, SINK_TOPIC_NAME,
+    dht_cache_and_stream_from_config, dump_sample_domo_cache, InternalResponseMessage,
+    LAMP_TOPIC_NAME, SINK_TOPIC_NAME,
 };
 use tarpc::{
     server::{BaseChannel, Channel},
@@ -55,11 +55,9 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Clone)]
 struct SifisToDht {
     cache_sender: mpsc::Sender<Registration>,
+    dht_cache: Arc<sifis_dht::cache::Cache>,
     peer_id: PeerId,
 }
-
-#[derive(Debug, Deserialize)]
-struct GetTopicNameResponse<T>(Vec<GetTopicNameEntry<T>>);
 
 impl SifisToDht {
     async fn register<T>(
@@ -94,7 +92,7 @@ impl SifisApi for SifisToDht {
     #[inline]
     async fn find_lamps(self, _: tarpc::context::Context) -> Result<Vec<String>, SifisApiError> {
         trace!("Request to find lamps");
-        Ok(find_by_topic(&self.cache_sender, LAMP_TOPIC_NAME).await)
+        Ok(find_by_topic(&self.dht_cache, LAMP_TOPIC_NAME).await)
     }
 
     async fn turn_lamp_on(
@@ -163,7 +161,7 @@ impl SifisApi for SifisToDht {
     #[inline]
     async fn find_sinks(self, _: tarpc::context::Context) -> Result<Vec<String>, SifisApiError> {
         trace!("Request to find sinks");
-        Ok(find_by_topic(&self.cache_sender, SINK_TOPIC_NAME).await)
+        Ok(find_by_topic(&self.dht_cache, SINK_TOPIC_NAME).await)
     }
 
     async fn set_sink_flow(
@@ -388,16 +386,20 @@ async fn main() -> anyhow::Result<()> {
 
     let (dht_cache, dht_events_stream) =
         dht_cache_and_stream_from_config(&cli.cache_config_file).await?;
+    let dht_cache = Arc::new(dht_cache);
     let (cache_sender, cache_receiver) = mpsc::channel(32);
     let (response_sender, response_receiver) = mpsc::channel(32);
     let (continuation_sender, continuation_receiver) = mpsc::unbounded_channel();
 
     let tarpc_server = {
         let cache_sender = cache_sender.clone();
+        let dht_cache = Arc::clone(&dht_cache);
         create_tarpc_server(&cli.socket, move |peer_id| {
             let cache_sender = cache_sender.clone();
+            let dht_cache = Arc::clone(&dht_cache);
             SifisToDht {
                 cache_sender,
+                dht_cache,
                 peer_id,
             }
             .serve()
@@ -532,19 +534,10 @@ impl Display for PeerId {
     }
 }
 
-async fn find_by_topic(
-    cache_sender: &mpsc::Sender<Registration>,
-    topic_name: impl Into<String>,
-) -> Vec<String> {
-    let (registration, response_receiver) = Registration::get_topic_name(topic_name);
-    cache_sender
-        .send(registration)
-        .await
-        .expect("unable to write into cache wrapper channel");
-
-    let topic_uuids = response_receiver
-        .await
-        .expect("unable to get message from responder");
+async fn find_by_topic(dht_cache: &sifis_dht::cache::Cache, topic_name: &str) -> Vec<String> {
+    let query = dht_cache.query(topic_name);
+    let query = query.get().await;
+    let topic_uuids = query.iter().map(|(uuid, _)| uuid.to_owned()).collect();
 
     debug!("Received response for get_topic_name: {topic_uuids:#?}");
 

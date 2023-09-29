@@ -1,7 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 use anyhow::Context;
-use log::{debug, info, trace, warn};
+use log::{debug, trace};
 use sifis_message::RequestMessage;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -43,17 +43,6 @@ pub(super) async fn handle_registration_message(
         } => helper.handle_thing(request_uuid, ty, operation).await,
 
         Registration::Raw(request_message) => pub_request_message(&request_message, dht_cache),
-        Registration::GetTopicName { name, responder } => {
-            let query = dht_cache.query(&name);
-            let query = query.get().await;
-            let response = query.iter().map(|(uuid, _)| uuid.to_owned()).collect();
-
-            info!("GetTopicName for name {name} got a response: {response:#?}");
-            if responder.send(response).is_err() {
-                warn!("cannot respond to get_topic_name, channel closed");
-            }
-            Ok(())
-        }
         Registration::ToUcs(to_ucs) => helper.handle_to_ucs(to_ucs).await,
     }
 }
