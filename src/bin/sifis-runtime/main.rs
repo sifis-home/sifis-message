@@ -69,6 +69,7 @@ impl SifisToDht {
             registration::Receiver<Result<T, registration::ResponseError>>,
         ),
     ) -> Result<T, SifisApiError> {
+        info!("Requesting {:#?}", registration);
         self.cache_sender.send(registration).await.map_err(|_| {
             SifisApiError::NotFound("unable to send data through domo cache channel".to_owned())
         })?;
@@ -1006,6 +1007,10 @@ fn handle_ucs_response_inner<F>(
 
     match evaluation {
         ucs::Evaluation::Permit => {
+            info!(
+                "Permit {:?} for {} received",
+                access_request.kind, access_request.request_uuid
+            );
             let Some(continuation_message) = on_pemit(access_request) else {
                 error!("Unable to perform continuation on permit evaluation");
                 return;
@@ -1016,6 +1021,10 @@ fn handle_ucs_response_inner<F>(
             }
         }
         ucs::Evaluation::Deny => {
+            info!(
+                "Deny {:?} for {} received",
+                access_request.kind, access_request.request_uuid
+            );
             let Some(request) = queue.remove(&access_request.request_uuid) else {
                 warn!("Unable to find request in queue to respond with a deny");
                 return;
@@ -1035,7 +1044,7 @@ async fn registration_handler(
     topic_uuid: Uuid,
 ) {
     let send_registration = || async {
-        trace!("Sending registration message to UCS");
+        debug!("Sending registration message to UCS {topic_uuid}");
         cache_sender
             .send(Registration::RegisterToUcs {
                 topic_name: Arc::clone(topic_name),
@@ -1048,8 +1057,10 @@ async fn registration_handler(
     send_registration().await;
     loop {
         if registered_to_ucs.load(atomic::Ordering::Acquire) {
+            info!("Refresh registration");
             sleep(Duration::from_secs(60 * 5)).await;
         } else {
+            info!("Not registered yet, trying again");
             sleep(Duration::from_secs(10)).await;
         }
 
