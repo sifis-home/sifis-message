@@ -107,10 +107,12 @@ fn run_things(
             port,
             ty,
             uuid,
+            ref args,
         } = cli_thing;
         let child = tokio::process::Command::new(path)
             .arg("--listen-port")
             .arg(format!("{port}"))
+            .args(args)
             .spawn()?;
         let thing = ThingRepr { port, uuid, ty };
 
