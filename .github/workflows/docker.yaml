@@ -2,6 +2,9 @@ name: docker-aarch64
 
 on:
   push:
+    branches:
+      - master
+      - domo-wot-bridge-integration
     tags:
       - 'v*.*.*'
       - 'p*'
