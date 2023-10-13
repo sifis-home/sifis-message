@@ -3,11 +3,7 @@ name: docker-aarch64
 on:
   push:
     branches:
-      - master
       - domo-wot-bridge-integration
-    tags:
-      - 'v*.*.*'
-      - 'p*'
 jobs:
   cross-compile:
     runs-on: ubuntu-latest
@@ -34,13 +30,7 @@ jobs:
       uses: docker/build-push-action@v4
       with:
         push: true
-        tags: ghcr.io/sifis-home/sifis-alpine-runtime-wot-ucon-arm64v8:latest
+        tags: ghcr.io/sifis-home/sifis-alpine-runtime-domo-arm64v8:latest
         context: target/aarch64-unknown-linux-musl/release
         file: docker/Dockerfile-alpine-runtime
-    - name: Build and push consumer
-      uses: docker/build-push-action@v4
-      with:
-        push: true
-        tags: ghcr.io/sifis-home/sifis-alpine-consumer-wot-arm64v8:latest
-        context: target/aarch64-unknown-linux-musl/release
-        file: docker/Dockerfile-alpine-consumer
+
