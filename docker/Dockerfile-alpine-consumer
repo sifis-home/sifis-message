@@ -1,3 +1,6 @@
+FROM ghcr.io/sifis-home/demo-things-aarch64-unknown-linux-musl:latest as lamp
+
 FROM arm64v8/alpine
+COPY --from=lamp /lamp /lamp
 ADD sifis-consumer /
 ENTRYPOINT ["/sifis-consumer"]
